@@ -16,7 +16,7 @@ on:
 
 jobs:
   alert:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       TZ: Europe/Paris
       INFERSPORTS_API_KEY: ${{ secrets.INFERSPORTS_API_KEY }}
@@ -26,28 +26,23 @@ jobs:
       SMTP_HOST: smtp.gmail.com
       SMTP_PORT: "587"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - run: pip install pandas
+      - name: 准备状态文件
+        run: mkdir -p output && test -f output/alert_state.json || echo '{}' > output/alert_state.json
       - name: 恢复去重状态
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: output/alert_state.json
           key: alert-state-${{ github.run_id }}
           restore-keys: |
             alert-state-
-      - run: mkdir -p output
       - name: 判断时段
         id: gate
         run: echo "mode=$(python -m src.alert_today --print-mode --mode '${{ github.event.inputs.mode || 'auto' }}')" >> "$GITHUB_OUTPUT"
       - name: 扫描并邮件
         if: steps.gate.outputs.mode != 'rest'
         run: python -m src.alert_today --mode ${{ steps.gate.outputs.mode }}
-      - name: 保存去重状态
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: output/alert_state.json
-          key: alert-state-${{ github.run_id }}
