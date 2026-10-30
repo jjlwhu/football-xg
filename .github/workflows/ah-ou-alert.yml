@@ -1,10 +1,6 @@
 name: 皇冠盘口预警
 
 on:
-  schedule:
-    # 公开仓库后重注册定时。UTC 每小时 :10；脚本按欧洲时间判断是否休息。
-    - cron: "10 * * * *"
-    - cron: "30 6,7 * * *"
   workflow_dispatch:
     inputs:
       mode:
@@ -15,7 +11,7 @@ on:
 
 jobs:
   alert:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     env:
       TZ: Europe/Paris
       INFERSPORTS_API_KEY: ${{ secrets.INFERSPORTS_API_KEY }}
@@ -30,18 +26,5 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install pandas
-      - name: 准备状态文件
-        run: mkdir -p output && test -f output/alert_state.json || echo '{}' > output/alert_state.json
-      - name: 恢复去重状态
-        uses: actions/cache@v5
-        with:
-          path: output/alert_state.json
-          key: alert-state-${{ github.run_id }}
-          restore-keys: |
-            alert-state-
-      - name: 判断时段
-        id: gate
-        run: echo "mode=$(python -m src.alert_today --print-mode --mode '${{ github.event.inputs.mode || 'auto' }}')" >> "$GITHUB_OUTPUT"
-      - name: 扫描并邮件
-        if: steps.gate.outputs.mode != 'rest'
-        run: python -m src.alert_today --mode ${{ steps.gate.outputs.mode }}
+      - run: mkdir -p output
+      - run: python -m src.alert_today --mode ${{ github.event.inputs.mode || 'auto' }}

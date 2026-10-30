@@ -66,6 +66,7 @@ def describe(line: float) -> str:
 INFER_BASE = "https://api.infersports.dev/v1"
 BOOK_PREF = ("crown", "sbobet")
 PLIST_ID = "com.footballxg.ahou-alert"
+CAFFEINE_ID = "com.footballxg.caffeinate"
 EUROPE = ZoneInfo("Europe/Paris")
 
 
@@ -550,8 +551,35 @@ def _calendar_intervals() -> str:
     return "\n".join(blocks)
 
 
+def _write_launch_agent(label: str, body: str) -> Path:
+    dest = Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(body, encoding="utf-8")
+    subprocess.run(["launchctl", "unload", str(dest)], check=False, capture_output=True)
+    subprocess.run(["launchctl", "load", str(dest)], check=True)
+    return dest
+
+
+def install_caffeinate() -> Path:
+    plist = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>{CAFFEINE_ID}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/caffeinate</string>
+    <string>-dims</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+</dict>
+</plist>
+"""
+    return _write_launch_agent(CAFFEINE_ID, plist)
+
+
 def install_launchd() -> Path:
-    dest = Path.home() / "Library" / "LaunchAgents" / f"{PLIST_ID}.plist"
     py = ROOT / ".venv" / "bin" / "python"
     plist = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -574,10 +602,8 @@ def install_launchd() -> Path:
 </dict>
 </plist>
 """
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(plist, encoding="utf-8")
-    subprocess.run(["launchctl", "unload", str(dest)], check=False, capture_output=True)
-    subprocess.run(["launchctl", "load", str(dest)], check=True)
+    dest = _write_launch_agent(PLIST_ID, plist)
+    install_caffeinate()
     return dest
 
 
@@ -597,7 +623,7 @@ def main() -> None:
     if args.install:
         dest = install_launchd()
         print(f"已安装本机定时：{dest}")
-        print("欧洲 8:30 通扫，0:00 扫未来9小时，9:00–23:00 与 1:00 整点扫未来1.5小时。休息时段不再唤起。电脑睡眠/关机不会跑。")
+        print("欧洲 8:30 通扫，0:00 扫未来9小时，9:00–23:00 与 1:00 整点扫未来1.5小时。已同时打开防闲置睡眠。合盖仍会睡。")
         return
     if args.loop:
         print("挂起运行（欧洲时间）。Ctrl+C 结束。关机即停。")

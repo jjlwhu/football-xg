@@ -1,0 +1,26 @@
+name: hourly
+
+on:
+  schedule:
+    - cron: '50 * * * *'
+  workflow_dispatch:
+
+jobs:
+  alert:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Europe/Paris
+      INFERSPORTS_API_KEY: ${{ secrets.INFERSPORTS_API_KEY }}
+      ALERT_TO: ${{ secrets.ALERT_TO }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS }}
+      SMTP_HOST: smtp.gmail.com
+      SMTP_PORT: "587"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: pip install pandas
+      - run: mkdir -p output
+      - run: python -m src.alert_today --mode auto
