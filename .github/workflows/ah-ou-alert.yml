@@ -2,10 +2,10 @@ name: 皇冠盘口预警
 
 on:
   schedule:
-    # GitHub cron 是 UTC。脚本用 Europe/Paris 自己判断早盘/夜间/小时/休息。
-    # 6:30、7:30 UTC 覆盖夏令/冬令 8:30；整点覆盖 9:00–1:00 和午夜 9 小时。
+    # GitHub cron 是 UTC，整点容易拥堵被跳过。每小时 :10 跑一次，
+    # 脚本按欧洲时间自己判断早盘/夜间/小时/休息。
+    - cron: "10 * * * *"
     - cron: "30 6,7 * * *"
-    - cron: "0 0,7-23 * * *"
   workflow_dispatch:
     inputs:
       mode:
