@@ -1,0 +1,53 @@
+name: 皇冠盘口预警
+
+on:
+  schedule:
+    # GitHub cron 是 UTC。脚本用 Europe/Paris 自己判断早盘/夜间/小时/休息。
+    # 6:30、7:30 UTC 覆盖夏令/冬令 8:30；整点覆盖 9:00–1:00 和午夜 9 小时。
+    - cron: "30 6,7 * * *"
+    - cron: "0 0,7-23 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: morning=当日通扫 overnight=夜间9小时 hour=未来1.5小时
+        default: auto
+        type: choice
+        options: [auto, morning, overnight, hour]
+
+jobs:
+  alert:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Europe/Paris
+      INFERSPORTS_API_KEY: ${{ secrets.INFERSPORTS_API_KEY }}
+      ALERT_TO: ${{ secrets.ALERT_TO }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS }}
+      SMTP_HOST: smtp.gmail.com
+      SMTP_PORT: "587"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pandas
+      - name: 恢复去重状态
+        uses: actions/cache@v4
+        with:
+          path: output/alert_state.json
+          key: alert-state-${{ github.run_id }}
+          restore-keys: |
+            alert-state-
+      - run: mkdir -p output
+      - name: 判断时段
+        id: gate
+        run: echo "mode=$(python -m src.alert_today --print-mode --mode '${{ github.event.inputs.mode || 'auto' }}')" >> "$GITHUB_OUTPUT"
+      - name: 扫描并邮件
+        if: steps.gate.outputs.mode != 'rest'
+        run: python -m src.alert_today --mode ${{ steps.gate.outputs.mode }}
+      - name: 保存去重状态
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: output/alert_state.json
+          key: alert-state-${{ github.run_id }}
