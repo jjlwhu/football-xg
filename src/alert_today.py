@@ -1,14 +1,8 @@
-"""皇冠主盘命中就发 Gmail。
+"""每 15 分钟扫未来 30 分钟皇冠主盘，命中就发 Gmail。
 
-欧洲时间 8:30 通扫当天；9:00–23:00 每个整点扫未来 1.5 小时；
-0:00 扫未来 9 小时（过夜到早上）；1:00 再扫 1.5 小时；其后休息。
-没命中不发信。同一场每小时提醒只发一次。
-
-本机挂着：python -m src.alert_today --loop
-本机定时唤起：python -m src.alert_today --install
-盘口：InferSports 免费档，优先皇冠 crown，没有则 sbobet。
-电脑关机也能跑：把仓库推到 GitHub，用 Actions 定时（见 .github/workflows/ah-ou-alert.yml）
-试发：python -m src.alert_today --demo
+同一场同一盘口每次扫到都会再发，避免漏。
+本机：python -m src.alert_today --install
+试一次：python -m src.alert_today --demo
 """
 
 from __future__ import annotations
@@ -33,6 +27,7 @@ OUT = ROOT / "output"
 PROC = ROOT / "data" / "processed"
 RULES = ROOT / "data" / "rules" / "ah_ou_alert_rules.csv"
 LOG = OUT / "today_alert.txt"
+BOARD = OUT / "live_board.txt"
 STATE = OUT / "alert_state.json"
 ENV_PATH = ROOT / ".env"
 _LINE_LABEL = {
@@ -63,6 +58,8 @@ def describe(line: float) -> str:
     side = "主让" if line < 0 else "客让"
     key = snap(abs(line))
     return side + _LINE_LABEL.get(key, f"|h|={key}")
+
+
 INFER_BASE = "https://api.infersports.dev/v1"
 BOOK_PREF = ("crown", "sbobet")
 PLIST_ID = "com.footballxg.ahou-alert"
@@ -156,10 +153,10 @@ def europe_now() -> datetime:
 
 def window_for(mode: str) -> tuple[datetime, datetime, str]:
     now = europe_now()
+    if mode in ("watch", "hour", "auto"):
+        return now, now + timedelta(minutes=30), "未来30分钟"
     if mode == "overnight":
         return now, now + timedelta(hours=9), "夜间未来9小时"
-    if mode == "hour":
-        return now, now + timedelta(minutes=90), "未来1.5小时"
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     return start, start + timedelta(days=1), "今日全天"
 
@@ -407,51 +404,11 @@ def today_key() -> str:
 
 
 def detect_mode() -> str:
-    """8:30 早盘；0:00 夜间 9 小时；9:00–23:00 与 1:00 小时盘；其余 rest。"""
-    now = europe_now()
-    h, m = now.hour, now.minute
-    state = load_state()
-    day = today_key()
-    morning_done = state.get("date") == day and state.get("morning_sent")
-    overnight_done = state.get("date") == day and state.get("overnight_sent")
-    if h == 8 and m >= 30:
-        return "rest" if morning_done else "morning"
-    if h == 0 and m <= 10:
-        return "rest" if overnight_done else "overnight"
-    if h == 1 and m <= 10:
-        return "hour"
-    if 1 < h < 8 or (h == 1 and m > 10) or (h == 8 and m < 30):
-        return "rest"
-    if m <= 10 and h >= 9:
-        return "hour"
-    return "rest"
+    return "watch"
 
 
 def next_slot() -> datetime:
-    now = europe_now()
-    start = now.replace(second=0, microsecond=0)
-    cand: list[datetime] = []
-    for day in (0, 1):
-        base = (start.replace(hour=0, minute=0) + timedelta(days=day))
-        cand.append(base.replace(hour=8, minute=30))
-        for hour in list(range(9, 24)) + [0, 1]:
-            cand.append(base.replace(hour=hour, minute=0))
-    future = [t for t in cand if t > now + timedelta(seconds=2)]
-    return min(future)
-
-
-def filter_hourly_dupes(hits: list[dict], state: dict) -> list[dict]:
-    day = today_key()
-    if state.get("date") != day:
-        state.clear()
-        state["date"] = day
-        state["hourly_ids"] = []
-        state["morning_sent"] = False
-        state["overnight_sent"] = False
-    seen = set(state.get("hourly_ids") or [])
-    fresh = [h for h in hits if str(h.get("id")) not in seen]
-    state["hourly_ids"] = list(seen | {str(h.get("id")) for h in fresh})
-    return fresh
+    return europe_now() + timedelta(minutes=15)
 
 
 def demo_games() -> list[dict]:
@@ -462,7 +419,7 @@ def demo_games() -> list[dict]:
             "league": "DEMO",
             "home": "示例主队",
             "away": "示例客队",
-            "kickoff": (now + timedelta(minutes=40)).isoformat(timespec="minutes"),
+            "kickoff": (now + timedelta(minutes=20)).isoformat(timespec="minutes"),
             "book": "crown",
             "ah_line": -0.75,
             "ah_home": 1.88,
@@ -479,7 +436,6 @@ def run(mode: str, demo: bool = False) -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     rules = load_rules()
     start, end, label = window_for(mode)
-    state = load_state()
     if demo:
         games, book = demo_games(), "DEMO"
     else:
@@ -494,23 +450,6 @@ def run(mode: str, demo: bool = False) -> None:
         books = sorted({str(g.get("book") or "") for g in games if g.get("book")})
         book = ",".join(books) if books else "crown"
     hits = match_alerts(games, rules)
-    if mode in ("hour", "overnight") and not demo:
-        hits = filter_hourly_dupes(hits, state)
-        if mode == "overnight":
-            state["overnight_sent"] = True
-    elif mode == "morning":
-        if state.get("date") != today_key():
-            state = {
-                "date": today_key(),
-                "hourly_ids": [],
-                "morning_sent": False,
-                "overnight_sent": False,
-            }
-        state["morning_sent"] = True
-        state["date"] = today_key()
-        state.setdefault("hourly_ids", [])
-        state.setdefault("overnight_sent", False)
-    save_state(state)
     when = europe_now().strftime("%Y-%m-%d %H:%M")
     text = (
         format_body(hits, when, label)
@@ -521,13 +460,7 @@ def run(mode: str, demo: bool = False) -> None:
     print(text)
     if not hits:
         return
-    if mode == "morning":
-        tag = "早盘通扫"
-    elif mode == "overnight":
-        tag = "夜间9小时"
-    else:
-        tag = "开球前1.5小时"
-    sent = send_mail(f"皇冠预警{tag} {len(hits)}场 {when[:10]}", text)
+    sent = send_mail(f"皇冠预警 {len(hits)}场 {when}", text)
     print("已发送", sent)
 
 
@@ -536,19 +469,6 @@ def sleep_until_next_slot() -> None:
     sec = max(5.0, (nxt - europe_now()).total_seconds())
     print(f"挂起到欧洲时间 {nxt.strftime('%Y-%m-%d %H:%M')}（约 {sec / 60:.0f} 分钟）")
     time.sleep(sec)
-
-
-def _calendar_intervals() -> str:
-    slots = [(8, 30), (0, 0), (1, 0)] + [(h, 0) for h in range(9, 24)]
-    blocks = []
-    for hour, minute in slots:
-        blocks.append(
-            "    <dict>\n"
-            f"      <key>Hour</key><integer>{hour}</integer>\n"
-            f"      <key>Minute</key><integer>{minute}</integer>\n"
-            "    </dict>"
-        )
-    return "\n".join(blocks)
 
 
 def _write_launch_agent(label: str, body: str) -> Path:
@@ -593,10 +513,8 @@ def install_launchd() -> Path:
     <string>-m</string>
     <string>src.alert_today</string>
   </array>
-  <key>StartCalendarInterval</key>
-  <array>
-{_calendar_intervals()}
-  </array>
+  <key>RunAtLoad</key><true/>
+  <key>StartInterval</key><integer>900</integer>
   <key>StandardOutPath</key><string>{ROOT / "output" / "alert_launchd.log"}</string>
   <key>StandardErrorPath</key><string>{ROOT / "output" / "alert_launchd.err"}</string>
 </dict>
@@ -610,10 +528,10 @@ def install_launchd() -> Path:
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--demo", action="store_true")
-    p.add_argument("--install", action="store_true", help="本机按欧洲作息整点唤起（电脑要开着）")
-    p.add_argument("--loop", action="store_true", help="进程挂着按欧洲时间作息跑")
-    p.add_argument("--print-mode", action="store_true", help="只打印 morning/overnight/hour/rest")
-    p.add_argument("--mode", choices=("auto", "morning", "overnight", "hour", "rest"), default="auto")
+    p.add_argument("--install", action="store_true", help="本机每15分钟扫未来30分钟（电脑要开着）")
+    p.add_argument("--loop", action="store_true", help="进程挂着每15分钟扫一次")
+    p.add_argument("--print-mode", action="store_true")
+    p.add_argument("--mode", choices=("auto", "watch", "morning", "overnight", "hour", "rest"), default="auto")
     args = p.parse_args()
     load_dotenv()
     if args.print_mode:
@@ -623,7 +541,7 @@ def main() -> None:
     if args.install:
         dest = install_launchd()
         print(f"已安装本机定时：{dest}")
-        print("欧洲 8:30 通扫，0:00 扫未来9小时，9:00–23:00 与 1:00 整点扫未来1.5小时。已同时打开防闲置睡眠。合盖仍会睡。")
+        print("每15分钟扫未来30分钟，命中就发邮件。同一场每次都会再发。电脑睡眠/合盖不会跑。")
         return
     if args.loop:
         print("挂起运行（欧洲时间）。Ctrl+C 结束。关机即停。")
